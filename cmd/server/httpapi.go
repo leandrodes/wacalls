@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -34,13 +35,59 @@ func (s *server) routes() http.Handler {
 			mux.Handle("/", http.FileServer(http.Dir(s.staticDir)))
 		}
 	}
-	return withCORS(mux)
+	return withCORS(withAuth(mux))
 }
 
-func withCORS(h http.Handler) http.Handler {
+// withAuth protege /api/* com uma API Key (env WACALLS_API_KEY).
+// Aceita o cabeçalho "X-API-Key", "Authorization: Bearer <key>" ou,
+// para EventSource (SSE), o parâmetro de query "api_key".
+// Se WACALLS_API_KEY não estiver definida, a autenticação fica desativada.
+func withAuth(h http.Handler) http.Handler {
+	key := strings.TrimSpace(os.Getenv("WACALLS_API_KEY"))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Client-Id")
+		if key == "" || !strings.HasPrefix(r.URL.Path, "/api/") {
+			h.ServeHTTP(w, r)
+			return
+		}
+		provided := r.Header.Get("X-API-Key")
+		if provided == "" {
+			if ah := r.Header.Get("Authorization"); strings.HasPrefix(ah, "Bearer ") {
+				provided = strings.TrimSpace(strings.TrimPrefix(ah, "Bearer "))
+			}
+		}
+		if provided == "" {
+			provided = r.URL.Query().Get("api_key")
+		}
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(key)) != 1 {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// withCORS aplica CORS. Origens permitidas via env WACALLS_ALLOWED_ORIGINS
+// (lista separada por vírgula). Se vazio, usa "*".
+func withCORS(h http.Handler) http.Handler {
+	raw := strings.TrimSpace(os.Getenv("WACALLS_ALLOWED_ORIGINS"))
+	allowed := map[string]bool{}
+	wildcard := raw == ""
+	if !wildcard {
+		for _, o := range strings.Split(raw, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				allowed[o] = true
+			}
+		}
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if wildcard {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else if origin != "" && allowed[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Client-Id, X-API-Key, Authorization")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

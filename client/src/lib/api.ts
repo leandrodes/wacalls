@@ -1,9 +1,19 @@
 import { getClientId } from "./client-id";
+import { getApiKey } from "./api-key";
 
-const baseHeaders = (): HeadersInit => ({
-  "X-Client-Id": getClientId(),
-  "Content-Type": "application/json",
-});
+const baseHeaders = (): HeadersInit => {
+  const headers: Record<string, string> = {
+    "X-Client-Id": getClientId(),
+    "Content-Type": "application/json",
+    ...apiKeyHeader(),
+  };
+  return headers;
+};
+
+export const apiKeyHeader = (): Record<string, string> => {
+  const key = getApiKey();
+  return key ? { "X-API-Key": key } : {};
+};
 
 export const apiGet = async <T>(path: string): Promise<T> => {
   const r = await fetch(path, { headers: baseHeaders() });

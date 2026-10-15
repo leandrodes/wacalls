@@ -1,0 +1,10 @@
+.git
+.github
+.gitignore
+client/node_modules
+client/dist
+*.db
+*.db-shm
+*.db-wal
+Dockerfile
+README.md
